@@ -1,0 +1,18 @@
+# Кэш Python
+__pycache__/
+*.py[cod]
+
+# Логи
+*.log
+
+# Виртуальное окружение
+venv/
+env/
+
+# Настройки IDE
+.idea/
+.vscode/
+
+# Файлы ОС
+.DS_Store
+Thumbs.db
