@@ -126,6 +126,46 @@ class boxText:
         self.dot_time = 0.0  # таймер для точек
         self.dot_interval = 0.4  # как часто переключаются точки(сек)
         self.dot_count = 0  # 0..3 (0=нет точек,1="." и т.д)
+        self.padding = 16  # отступы внутри бокса
+        self.line_spacing = 6  # расстояние между строками (пиксели)
+
+    def wrap_text(self, text, max_width):
+        # поддержим ручные переносы \n
+        words = text.replace("\n", " \n ").split(" ")
+
+        lines, current = [], ""
+        for w in words:
+            if w == "\n":  # принудительный перевод строки
+                lines.append(current)
+                current = ""
+                continue
+
+            test = (current + " " + w).strip() if current else w
+            if self.font.size(test)[0] <= max_width:
+                current = test
+            else:
+                if current:
+                    lines.append(current)
+                # если слово само длиннее строки — режем по символам
+                if self.font.size(w)[0] > max_width:
+                    parts, cur = [], ""
+                    for ch in w:
+                        t = cur + ch
+                        if self.font.size(t)[0] <= max_width:
+                            cur = t
+                        else:
+                            parts.append(cur)
+                            cur = ch
+                    if cur:
+                        parts.append(cur)
+                    lines.extend(parts[:-1])
+                    current = parts[-1] if parts else ""
+                else:
+                    current = w
+
+        if current:
+            lines.append(current)
+        return lines
 
     def set_text(self, text):
         self.text = text
@@ -161,22 +201,35 @@ class boxText:
                          border_radius=10)  # RGBA: последний параметр — альфа (0 = прозрачный, 255 = непрозрачный)
         pygame.draw.rect(temp, (90, 95, 110, 255), temp.get_rect(), 2, border_radius=10)  # тут параметры рамки
         surf.blit(temp, self.rect.topleft)
-        x = self.rect.x + 16
-        y = self.rect.y + 16
-        text_surface = self.font.render(self.display_text, True, (230, 230, 230))
         text_to_draw = self.display_text
+        if getattr(self, "dot_count", 0) and getattr(self, "flag_finished", False):
+            text_to_draw += " " + " " * self.dot_count
         if self.flag_finished and self.dot_count:
             text_to_draw += " " + "." * self.dot_count
-        text_surface = self.font.render(text_to_draw, True, (230, 230, 230))
-        surf.blit(text_surface, (x, y))
+        max_widht = self.rect.width - 2 * self.padding
+        lines = self.wrap_text(text_to_draw, max_widht)
+        x = self.rect.x + self.padding
+        y = self.rect.y + self.padding
+        for line in lines:
+            surface = self.font.render(line, True, (230, 230, 230))
+            surf.blit(surface, (x, y))
+            y += surface.get_height() + self.line_spacing
+
     def skip_to_end(self):
         self.display_text = self.text
         self.index = len(self.text)
         self.flag_finished = True
 
+
 pygame.init()
 pygame.mixer.init()
 pygame.font.init()
+current_line = 0
+text = ["oh noo it is wold of minecraft",
+        "wash my belly",
+        "ты видел мои огромные яйца?",
+        "JFDJSJFSJDJFJSDFJDSJFJJDSJFJSDJFSJFJJSDFJSDJFJJSDJFSJSDоофовфыовф",
+        ]
 screen = pygame.display.set_mode((1200, 800))
 box = boxText(100, 600, 1000, 150)
 pygame.display.set_caption("live off lying")
@@ -186,7 +239,7 @@ background = pygame.transform.scale(background, (1200, 800))
 pygame.mixer.music.load("a-gde-ia-i-kazhetsia-ia-v-mire-main-pokhozhe-na-to.mp3")
 pygame.mixer.music.play()
 pygame.mixer.music.set_volume(0.1)
-box.set_text("oh nooo it is world of minecraft")
+box.set_text(text[current_line])
 while True:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -196,6 +249,17 @@ while True:
             if event.key == pygame.K_SPACE:
                 if not box.flag_finished:
                     box.skip_to_end()
+                else:
+                    current_line += 1
+                    if current_line < len(text):
+                        box.set_text(text[current_line])
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if not box.flag_finished:
+                box.skip_to_end()
+            else:
+                current_line += 1
+                if current_line < len(text):
+                    box.set_text(text[current_line])
     screen.blit(background, (0, 0))
     box.draw(screen)
     dt = clock.tick(144) / 1000.0
