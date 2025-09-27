@@ -1,12 +1,26 @@
 import pygame
 import random
 import sys
+import json
 
 from django.utils.termcolors import background
-from numpy.core.numeric import True_
 
 
-class Steave:
+class Charaster:
+    def __init__(self, name):
+        self.name = name
+        self.dialogues = {}  # {"scene_id": ["реплика1", "реплика2", ...]}
+
+    def say(self, scene_id, idx=None):
+        lines = self.dialogues.get(scene_id, [])
+        if idx is None:
+            # вернуть все реплики сцены как [(text, name), ...]
+            return [(line, self.name) for line in lines]
+        # вернуть одну конкретную реплику сцены
+        return (lines[idx], self.name)
+
+
+class Steve():
     hp = 20
     damage = 1
     shift_speed = 5.6
@@ -37,7 +51,7 @@ class neutral_mob:
 
 class pig(friendly_mob):
     def __init__(self):
-        super().__init__(10, 2)  # наследование хар-ки от родительского, и заполение своими
+        friendly_mob.__init__(self, hp=10, speed=2)  # наследование хар-ки от родительского, и заполение своими
 
 
 class cow(friendly_mob):
@@ -111,12 +125,21 @@ class iron_golem(neutral_mob):
         super().__init__(100, 7, 3)
 
 
+# сыны сюжета
+class Reijin(Charaster):
+    def __int__(self):
+        super().__init__("Reijin")
+        self.dialogues = {}
+
+
 # оформление
 class boxText:
     def __init__(self, x, y, wight, height):
         self.rect = pygame.Rect(x, y, wight,
                                 height)  # как я понял х и у это координаты верхнего левого угла,а дальше размер
         self.text = ""  # полный текст
+        self.speaker = ""
+        self.name_font = pygame.font.Font("arialmt.ttf", 24)
         self.display_text = ""  # то что уже напечаталось
         self.font = pygame.font.Font("arialmt.ttf", 28)
         self.flag_finished = False
@@ -167,12 +190,13 @@ class boxText:
             lines.append(current)
         return lines
 
-    def set_text(self, text):
+    def set_text(self, text, speaker=""):
         self.text = text
         self.display_text = ""
         self.index = 0
         self.time_accum = 0.0
         self.flag_finished = False
+        self.speaker = speaker
 
     def update(self, dt):
         if not self.flag_finished:
@@ -201,9 +225,11 @@ class boxText:
                          border_radius=10)  # RGBA: последний параметр — альфа (0 = прозрачный, 255 = непрозрачный)
         pygame.draw.rect(temp, (90, 95, 110, 255), temp.get_rect(), 2, border_radius=10)  # тут параметры рамки
         surf.blit(temp, self.rect.topleft)
+        if self.speaker:
+            name_surface = self.name_font.render(self.speaker, True, (255, 255, 160))
+            # рисуем имя в верхнем левом углу рамки, с небольшим отступом
+            surf.blit(name_surface, (self.rect.x + self.padding, self.rect.y - name_surface.get_height() - 4))
         text_to_draw = self.display_text
-        if getattr(self, "dot_count", 0) and getattr(self, "flag_finished", False):
-            text_to_draw += " " + " " * self.dot_count
         if self.flag_finished and self.dot_count:
             text_to_draw += " " + "." * self.dot_count
         max_widht = self.rect.width - 2 * self.padding
@@ -221,26 +247,72 @@ class boxText:
         self.flag_finished = True
 
 
+# json
+def load_scene_from_json(path, scene_id):
+    """
+    Читаем JSON и возвращаем:
+      - scene_meta: словарь метаданных сцены (фон, музыка, громкость, масштаб)
+      - scene_lines: список кортежей (text, speaker), как я понял — это нужно твоему боксу
+    """
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    scene_obj = data.get("scenes", {}).get(scene_id, {})
+    meta = scene_obj.get("meta", {})  # может не быть — тогда пусто
+    items = scene_obj.get("lines", [])  # массив реплик
+
+    # превращаем в [(text, speaker), ...]
+    lines = []
+    for it in items:
+        text = it.get("text", "")
+        speaker = it.get("speaker", "")
+        lines.append((text, speaker))
+
+    return meta, lines
+
+
 pygame.init()
 pygame.mixer.init()
 pygame.font.init()
+steve = Steve()
+pig = pig()  # наследование хар-ки от родительского, и заполение своими (оставляем как есть)
+
+# Вся информация о сцене теперь в JSON:
+scene1 = load_scene_from_json("scenes.json", "Dead")
 current_line = 0
-text = ["oh noo it is wold of minecraft",
-        "wash my belly",
-        "ты видел мои огромные яйца?",
-        "JFDJSJFSJDJFJSDFJDSJFJJDSJFJSDJFSJFJJSDFJSDJFJJSDJFSJSDоофовфыовф",
-        ]
 screen = pygame.display.set_mode((1200, 800))
 box = boxText(100, 600, 1000, 150)
 pygame.display.set_caption("live off lying")
 clock = pygame.time.Clock()  # как я понял эта функция фпс
-background = pygame.image.load("background.png").convert()
-background = pygame.transform.scale(background, (1200, 800))
-pygame.mixer.music.load("a-gde-ia-i-kazhetsia-ia-v-mire-main-pokhozhe-na-to.mp3")
-pygame.mixer.music.play()
-pygame.mixer.music.set_volume(0.1)
-box.set_text(text[current_line])
+# --- загружаем сцену и применяем её метаданные (фон/музыка) ---
+scene_meta, scene1 = load_scene_from_json("scenes.json", "The_awaking")
+
+# фон: как я понял, нужен convert() и масштаб под окно
+bg_path = scene_meta.get("background")
+if bg_path:
+    background = pygame.image.load(bg_path).convert()
+else:
+    background = pygame.Surface((1200, 800))  # запасной фон, если файла нет
+    background.fill((10, 12, 18))
+
+# масштаб под заданный размер (или под текущее окно)
+scale_to = scene_meta.get("scale_to", [1200, 800])
+if isinstance(scale_to, list) and len(scale_to) == 2:
+    background = pygame.transform.scale(background, (scale_to[0], scale_to[1]))
+
+# музыка: как я понял, нужно проигрывать в фоне и задать громкость
+music_path = scene_meta.get("music")
+if music_path:
+    try:
+        pygame.mixer.music.load(music_path)
+        pygame.mixer.music.play(-1)  # -1 — зациклить (если хочешь один раз — поставь 0)
+        pygame.mixer.music.set_volume(float(scene_meta.get("music_volume", 0.1)))
+    except Exception as e:
+        print("Не удалось загрузить музыку:", e)
+text, speaker = scene1[current_line]
+box.set_text(text, speaker)
 while True:
+    dt = clock.tick(144) / 1000.0
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             pygame.quit()
@@ -251,19 +323,18 @@ while True:
                     box.skip_to_end()
                 else:
                     current_line += 1
-                    if current_line < len(text):
-                        box.set_text(text[current_line])
+                    if current_line < len(scene1):
+                        text, speaker = scene1[current_line]
+                        box.set_text(text, speaker)
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if not box.flag_finished:
                 box.skip_to_end()
             else:
                 current_line += 1
-                if current_line < len(text):
-                    box.set_text(text[current_line])
+                if current_line < len(scene1):
+                    text, speaker = scene1[current_line]
+                    box.set_text(text, speaker)
+    box.update(dt)
     screen.blit(background, (0, 0))
     box.draw(screen)
-    dt = clock.tick(144) / 1000.0
-    box.update(dt)
     pygame.display.flip()
-    box.update(dt)
-    clock.tick(144)
