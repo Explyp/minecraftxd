@@ -1,0 +1,18 @@
+{
+  "scenes": {
+    "The_awaking": {
+      "meta": {
+        "background": "background.png",
+        "music": "a-gde-ia-i-kazhetsia-ia-v-mire-main-pokhozhe-na-to.mp3",
+        "music_volume": 0.1
+      },
+      "lines": [
+        { "speaker": "Steve",  "text": "Ох, где я?" },
+        { "speaker": "Steve",  "text": "Надо продвинуться дальше" },
+        { "speaker": "Cвинья", "text": "Хрю?" },
+        { "speaker": "Cвинья", "text": "Ты заблудился, Стив?" },
+        { "speaker": "Steve",  "text": "Ого, говорящая свинья?" }
+      ]
+    }
+  }
+}
