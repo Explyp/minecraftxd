@@ -3,7 +3,7 @@
     "The_awaking": {
       "meta": {
         "background": "",
-        "music": "metallica-damage-inc-bass.mp3",
+        "music": "music/metallica-damage-inc-bass.mp3",
         "music_volume": 1,
         "next": "The_dojo"
       },
@@ -19,8 +19,8 @@
     },
     "The_dojo": {
       "meta": {
-        "background": "The_dojo.jpg",
-        "music": "a-gde-ia-i-kazhetsia-ia-v-mire-main-pokhozhe-na-to.mp3",
+        "background": "backgrounds/The_dojo.jpg",
+        "music": "music/a-gde-ia-i-kazhetsia-ia-v-mire-main-pokhozhe-na-to.mp3",
         "music_volume": 1
       }
     }

@@ -120,9 +120,9 @@ class boxText:
                                 height)  # как я понял х и у это координаты верхнего левого угла,а дальше размер
         self.text = ""  # полный текст
         self.speaker = ""
-        self.name_font = pygame.font.Font("arialmt.ttf", 24)
+        self.name_font = pygame.font.Font("fonts/arialmt.ttf", 24)
         self.display_text = ""  # то что уже напечаталось
-        self.font = pygame.font.Font("arialmt.ttf", 28)
+        self.font = pygame.font.Font("fonts/arialmt.ttf", 28)
         self.flag_finished = False
         self.index = 0  # чтобы понимать какое кол-во слов выводится
         self.time_accum = 0.0
