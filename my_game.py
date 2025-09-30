@@ -3,21 +3,6 @@ import random
 import sys
 import json
 
-from django.utils.termcolors import background
-
-
-class Charaster:
-    def __init__(self, name):
-        self.name = name
-        self.dialogues = {}  # {"scene_id": ["реплика1", "реплика2", ...]}
-
-    def say(self, scene_id, idx=None):
-        lines = self.dialogues.get(scene_id, [])
-        if idx is None:
-            # вернуть все реплики сцены как [(text, name), ...]
-            return [(line, self.name) for line in lines]
-        # вернуть одну конкретную реплику сцены
-        return (lines[idx], self.name)
 
 
 class Steve():
@@ -126,10 +111,6 @@ class iron_golem(neutral_mob):
 
 
 # сыны сюжета
-class Reijin(Charaster):
-    def __int__(self):
-        super().__init__("Reijin")
-        self.dialogues = {}
 
 
 # оформление
@@ -249,11 +230,10 @@ class boxText:
 
 # json
 def load_scene_from_json(path, scene_id):
-    """
-    Читаем JSON и возвращаем:
-      - scene_meta: словарь метаданных сцены (фон, музыка, громкость, масштаб)
-      - scene_lines: список кортежей (text, speaker), как я понял — это нужно твоему боксу
-    """
+    # Читаем JSON и возвращаем:
+    # -scene_meta: словарь метаданных сцены (фон, музыка, громкость, масштаб)
+    # -scene_lines: список кортежей (text, speaker)
+
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -271,22 +251,57 @@ def load_scene_from_json(path, scene_id):
     return meta, lines
 
 
+def apply_scene_meta(snece_meta):
+    global background
+    bg_path = scene_meta.get("background")
+    if bg_path:
+        background = pygame.image.load(bg_path).convert()
+    else:
+        background = pygame.Surface((1200, 800))
+        background.fill((10, 12, 18))
+    music_path = scene_meta.get("music")
+    if music_path:
+        try:
+            pygame.mixer.music.load(music_path)
+            pygame.mixer.music.play(-1)
+            pygame.mixer.music.set_volume(float(snece_meta.get("music_volume")))
+        except Exception as e:
+            print("не удалось загрузить музыку:", e)
+
+def switch_scene(next_id):
+    """
+       Переходим в другую сцену:
+         - перечитываем JSON
+         - обновляем фон/музыку
+         - сбрасываем индекс реплики
+         - запускаем первую реплику новой сцены
+       """
+    global current_scene_id, scene_meta, scene_lines, current_line
+    current_scene_id = next_id
+    scene_meta, scene_lines = load_scene_from_json("scenes.json", current_scene_id)
+    apply_scene_meta(scene_meta)
+    current_line = 0
+    if scene_lines:
+        box.set_text(scene_lines[current_line][0], scene_lines[current_line][1])
+
+
+
+
 pygame.init()
 pygame.mixer.init()
 pygame.font.init()
 steve = Steve()
-pig = pig()  # наследование хар-ки от родительского, и заполение своими (оставляем как есть)
+screen = pygame.display.set_mode((1200, 800))
 
 # Вся информация о сцене теперь в JSON:
-scene1 = load_scene_from_json("scenes.json", "Dead")
+current_scene_id = "The_awaking"
+scene_meta, scene_lines = load_scene_from_json("scenes.json", current_scene_id)
+apply_scene_meta(scene_meta)
 current_line = 0
-screen = pygame.display.set_mode((1200, 800))
 box = boxText(100, 600, 1000, 150)
+box.set_text(scene_lines[current_line][0], scene_lines[current_line][1])
 pygame.display.set_caption("live off lying")
 clock = pygame.time.Clock()  # как я понял эта функция фпс
-# --- загружаем сцену и применяем её метаданные (фон/музыка) ---
-scene_meta, scene1 = load_scene_from_json("scenes.json", "The_awaking")
-
 # фон: как я понял, нужен convert() и масштаб под окно
 bg_path = scene_meta.get("background")
 if bg_path:
@@ -305,11 +320,11 @@ music_path = scene_meta.get("music")
 if music_path:
     try:
         pygame.mixer.music.load(music_path)
-        pygame.mixer.music.play(-1)  # -1 — зациклить (если хочешь один раз — поставь 0)
+        pygame.mixer.music.play(-1)  # -1 — зациклить, если надо один раз —  0)
         pygame.mixer.music.set_volume(float(scene_meta.get("music_volume", 0.1)))
     except Exception as e:
         print("Не удалось загрузить музыку:", e)
-text, speaker = scene1[current_line]
+text, speaker = scene_lines[current_line]
 box.set_text(text, speaker)
 while True:
     dt = clock.tick(144) / 1000.0
@@ -323,17 +338,33 @@ while True:
                     box.skip_to_end()
                 else:
                     current_line += 1
-                    if current_line < len(scene1):
-                        text, speaker = scene1[current_line]
+                    if current_line < len(scene_lines):
+                        text, speaker = scene_lines[current_line]
                         box.set_text(text, speaker)
+                    else:
+                        next_id = scene_meta.get("next")
+                        if next_id:
+                            switch_scene(next_id)
+                        else:
+                            # если next нет — остаёмся на последней (как сейчас)
+                            current_line = len(scene_lines) - 1
+
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if not box.flag_finished:
                 box.skip_to_end()
             else:
                 current_line += 1
-                if current_line < len(scene1):
-                    text, speaker = scene1[current_line]
+                if current_line < len(scene_lines):
+                    text, speaker = scene_lines[current_line]
                     box.set_text(text, speaker)
+                else:
+                    next_id = scene_meta.get("next")
+                    if next_id:
+                        switch_scene(next_id)
+                    else:
+                        # если next нет — остаёмся на последней (как сейчас)
+                        current_line = len(scene_lines) - 1
+
     box.update(dt)
     screen.blit(background, (0, 0))
     box.draw(screen)

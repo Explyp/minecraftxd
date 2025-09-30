@@ -2,17 +2,27 @@
   "scenes": {
     "The_awaking": {
       "meta": {
-        "background": "background.png",
-        "music": "a-gde-ia-i-kazhetsia-ia-v-mire-main-pokhozhe-na-to.mp3",
-        "music_volume": 0.1
+        "background": "",
+        "music": "metallica-damage-inc-bass.mp3",
+        "music_volume": 1,
+        "next": "The_dojo"
       },
       "lines": [
-        { "speaker": "Steve",  "text": "Ох, где я?" },
-        { "speaker": "Steve",  "text": "Надо продвинуться дальше" },
-        { "speaker": "Cвинья", "text": "Хрю?" },
-        { "speaker": "Cвинья", "text": "Ты заблудился, Стив?" },
-        { "speaker": "Steve",  "text": "Ого, говорящая свинья?" }
+        {"speaker": "",         "text": "[Чёрный экран]" },
+        {"speaker": "",          "text": "Вы ощущаете, только тьму, холод и больше ничего"},
+        {"speaker": "",          "text": "Тьма"},
+        {"speaker": "Гг",          "text": "[Лютый кашель]"},
+        {"speaker": "Некое существо",          "text": "Очнись сын мой"}
+
+
       ]
+    },
+    "The_dojo": {
+      "meta": {
+        "background": "The_dojo.jpg",
+        "music": "a-gde-ia-i-kazhetsia-ia-v-mire-main-pokhozhe-na-to.mp3",
+        "music_volume": 1
+      }
     }
   }
 }
