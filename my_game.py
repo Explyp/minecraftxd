@@ -1,188 +1,19 @@
-import pygame
-import random
+# -*- coding: utf-8 -*-
 import sys
 import json
+import pygame
 
-enemy_register = {}
+# ===== РЕЖИМЫ И СОСТОЯНИЯ =====
+MODE_DIALOGUE = "dialogue"
+MODE_BATTLE   = "battle"
 
-
-def register_enemy(enemy_id):
-    def deco(cls):
-        enemy_register[enemy_id] = cls
-        return cls
-
-    return deco
-
-
-class Creature:
-    def __init__(self, name, hp, atk, defense, sprite_path=None, level=1):
-        self.name = name
-        self.max_hp = hp
-        self.hp = hp
-        self.atk = atk
-        self.defense = defense
-        self.level = level
-        self.sprite = None
-        if sprite_path:
-            try:
-                self.sprite = pygame.image.load(sprite_path).convert_alpha()
-            except Exception:
-                self.sprite = None
-
-    def is_alive(self):
-        return self.hp > 0
-
-    def deal_damage_to(self, other):
-        raw = (self.atk + max(0, self.level - 1)) - other.defense
-        damage = max(1, raw)
-        other.hp = max(0, other.hp - damage)
-        return damage
-
-
-
-# сыны сюжета
-class Hero(Creature):
-    def __init__(self, level=1, sprite_path=None, **overrides):
-        base = dict(name="Главный герой", hp=25, atk=7, defense=2)
-        super().__init__(level=level, sprite_path=sprite_path, **base)
-
-
-@register_enemy("sensei")  # id, который будет в JSON
-class SenseiEnemy(Creature):
-    def __init__(self, level=1, sprite_path=None, **overrides):
-        base = dict(name="Сенсей", hp=30, atk=5, defense=2)
-        super().__init__(level=level, sprite_path=sprite_path, **base)
-
-    # пример «фичи» класса: скейлимся от уровня
-    def start_of_battle(self):
-        # лёгкий автоскейл: + (lvl-1)*3 HP и + (lvl-1) ATK
-        bonus_hp = max(0, (self.level - 1) * 3)
-        self.max_hp += bonus_hp
-        self.hp += bonus_hp
-        self.atk += max(0, self.level - 1)
-
-
-# оформление
-class boxText:
-    def __init__(self, x, y, wight, height):
-        self.rect = pygame.Rect(x, y, wight,
-                                height)  # как я понял х и у это координаты верхнего левого угла,а дальше размер
-        self.text = ""  # полный текст
-        self.speaker = ""
-        self.name_font = pygame.font.Font("fonts/arialmt.ttf", 24)
-        self.display_text = ""  # то что уже напечаталось
-        self.font = pygame.font.Font("fonts/arialmt.ttf", 28)
-        self.flag_finished = False
-        self.index = 0  # чтобы понимать какое кол-во слов выводится
-        self.time_accum = 0.0
-        self.cps = 12  # cкорость символа как я понял
-        self.dot_time = 0.0  # таймер для точек
-        self.dot_interval = 0.4  # как часто переключаются точки(сек)
-        self.dot_count = 0  # 0..3 (0=нет точек,1="." и т.д)
-        self.padding = 16  # отступы внутри бокса
-        self.line_spacing = 6  # расстояние между строками (пиксели)
-
-    def wrap_text(self, text, max_width):
-        # поддержим ручные переносы \n
-        words = text.replace("\n", " \n ").split(" ")
-
-        lines, current = [], ""
-        for w in words:
-            if w == "\n":  # принудительный перевод строки
-                lines.append(current)
-                current = ""
-                continue
-
-            test = (current + " " + w).strip() if current else w
-            if self.font.size(test)[0] <= max_width:
-                current = test
-            else:
-                if current:
-                    lines.append(current)
-                # если слово само длиннее строки — режем по символам
-                if self.font.size(w)[0] > max_width:
-                    parts, cur = [], ""
-                    for ch in w:
-                        t = cur + ch
-                        if self.font.size(t)[0] <= max_width:
-                            cur = t
-                        else:
-                            parts.append(cur)
-                            cur = ch
-                    if cur:
-                        parts.append(cur)
-                    lines.extend(parts[:-1])
-                    current = parts[-1] if parts else ""
-                else:
-                    current = w
-
-        if current:
-            lines.append(current)
-        return lines
-
-    def set_text(self, text, speaker=""):
-        self.text = text
-        self.display_text = ""
-        self.index = 0
-        self.time_accum = 0.0
-        self.flag_finished = False
-        self.speaker = speaker
-
-    def update(self, dt):
-        if not self.flag_finished:
-            self.time_accum += dt
-            chars_to_add = int(self.time_accum * self.cps)  # сколько букв можно написать за время
-            if chars_to_add > 0:
-                self.time_accum -= chars_to_add / self.cps
-                self.index = min(len(self.text),
-                                 self.index + chars_to_add)  # увеличиваем индекс напечатанья, но не вылазя за рамки слова, если я правильно понял
-                self.display_text = self.text[:self.index]
-                if self.index >= len(self.text):
-                    self.flag_finished = True
-        if self.flag_finished:
-            self.dot_time += dt  # время кадра не особо понимаю как это работает
-            if self.dot_time >= self.dot_interval:  # достаточно ли времени прошло для смены точек
-                self.dot_time -= self.dot_interval  # cчетчик тип как песочные часы чтобы после смены одной точки было две
-                self.dot_count = (self.dot_count + 1) % 4  # 0->1->2->3->0
-        else:
-            self.dot_time = 0
-            self.dot_count = 0
-
-    def draw(self, surf):
-        temp = pygame.Surface((self.rect.width, self.rect.height),
-                              pygame.SRCALPHA)  # временная поверхность размера прямоугольника
-        pygame.draw.rect(temp, (20, 22, 30, 160), temp.get_rect(),
-                         border_radius=10)  # RGBA: последний параметр — альфа (0 = прозрачный, 255 = непрозрачный)
-        pygame.draw.rect(temp, (90, 95, 110, 255), temp.get_rect(), 2, border_radius=10)  # тут параметры рамки
-        surf.blit(temp, self.rect.topleft)
-        if self.speaker:
-            name_surface = self.name_font.render(self.speaker, True, (255, 255, 160))
-            # рисуем имя в верхнем левом углу рамки, с небольшим отступом
-            surf.blit(name_surface, (self.rect.x + self.padding, self.rect.y - name_surface.get_height() - 4))
-        text_to_draw = self.display_text
-        if self.flag_finished and self.dot_count:
-            text_to_draw += " " + "." * self.dot_count
-        max_widht = self.rect.width - 2 * self.padding
-        lines = self.wrap_text(text_to_draw, max_widht)
-        x = self.rect.x + self.padding
-        y = self.rect.y + self.padding
-        for line in lines:
-            surface = self.font.render(line, True, (230, 230, 230))
-            surf.blit(surface, (x, y))
-            y += surface.get_height() + self.line_spacing
-
-    def skip_to_end(self):
-        self.display_text = self.text
-        self.index = len(self.text)
-        self.flag_finished = True
-
-
+# ===== ВСПОМОГАТЕЛЬНЫЕ UI-КОМПОНЕНТЫ =====
 class Button:
     def __init__(self, x, y, w, h, text, font=None, on_click=None):
         self.rect = pygame.Rect(x, y, w, h)
         self.text = text
         self.on_click = on_click
-        self.font = font or pygame.font.SysFont("font/arialmt.ttf", 22)
+        self.font = font or pygame.font.SysFont("fonts/arialmt.ttf", 32)
         # стили
         self.bg = (35, 38, 50)
         self.bg_hover = (50, 55, 75)
@@ -207,330 +38,502 @@ class Button:
                 return True
         return False
 
+# ===== ДИАЛОГОВЫЙ БОКС =====
+class boxText:
+    def __init__(self, x, y, wight, height):
+        # как я понял х и у это координаты верхнего левого угла,а дальше размер
+        self.rect = pygame.Rect(x, y, wight, height)
+        self.text = ""             # полный текст
+        self.speaker = ""          # имя говорящего
+        self.name_font = pygame.font.SysFont("fonts/arialmt.ttf", 34)
+        self.display_text = ""     # то что уже напечаталось
+        self.font = pygame.font.SysFont("fonts/arialmt.ttf", 38)
+        self.flag_finished = False
+        self.index = 0             # чтобы понимать какое кол-во букв выводится
+        self.time_accum = 0.0
+        self.cps = 12              # cкорость символа как я понял
+        self.dot_time = 0.0        # таймер для точек
+        self.dot_interval = 0.4    # как часто переключаются точки(сек)
+        self.dot_count = 0         # 0..3 (0=нет точек,1="." и т.д)
+        self.padding = 16          # отступы внутри бокса
+        self.line_spacing = 6      # расстояние между строками (пиксели)
 
-# json
-def load_scene_from_json(path, scene_id):
-    # Читаем JSON и возвращаем:
-    # -scene_meta: словарь метаданных сцены (фон, музыка, громкость, масштаб)
-    # -scene_lines: список кортежей (text, speaker)
-
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    scene_obj = data.get("scenes", {}).get(scene_id, {})
-    meta = scene_obj.get("meta", {})  # может не быть — тогда пусто
-    items = scene_obj.get("lines", [])  # массив реплик
-
-    # превращаем в [(text, speaker), ...]
-    lines = []
-    for it in items:
-        text = it.get("text", "")
-        speaker = it.get("speaker", "")
-        lines.append((text, speaker))
-    items = scene_obj.get("lines", [])
-    global scene_mode
-    scene_mode = items[:]
-    lines = []
-    for it in items:
-        if it.get("type") == "battle":
-            lines.append(("", ""))  # текст не показываем — вместо этого войдём в бой
-            continue
-        text = it.get("text", "")
-        speaker = it.get("speaker", "")
-        lines.append((text, speaker))
-
-    return meta, lines
-
-
-def make_enemy_from_json_node(node):
-    """
-    node: {"type":"battle","enemy":"sensei", "level":2, "sprite":"...", "override":{...}}
-    """
-    enemy_id = node.get("enemy", "unknown")
-    level = int(node.get("level", 1))
-    sprite = node.get("sprite")  # опционально
-    overrides = node.get("override", {})  # например {"hp": 40}
-
-    EnemyCls = enemy_register.get(enemy_id)
-    if not EnemyCls:
-        # запасной враг, если id не найден
-        return Creature(name=enemy_id, hp=10, atk=3, defense=1, sprite_path=sprite, level=level)
-
-    enemy = EnemyCls(level=level, sprite_path=sprite, **overrides)
-    return enemy
-
-
-def apply_scene_meta(scene_meta):
-    global background
-    bg_path = scene_meta.get("background")
-    if bg_path:
-        background = pygame.image.load(bg_path).convert()
-    else:
-        background = pygame.Surface((1200, 800))
-        background.fill((10, 12, 18))
-    music_path = scene_meta.get("music")
-    if music_path:
-        try:
-            pygame.mixer.music.load(music_path)
-            pygame.mixer.music.play(-1)
-            pygame.mixer.music.set_volume(float(scene_meta.get("music_volume")))
-        except Exception as e:
-            print("не удалось загрузить музыку:", e)
-
-
-def draw_batlle(surf):
-    surf.blit(background, (0, 0))
-    panel_h = 180
-    panel = pygame.Surface((surf.get_width(), panel_h), pygame.SRCALPHA)
-    pygame.draw.rect(panel, (20, 22, 30, 220), panel.get_rect(), border_radius=12)
-    pygame.draw.rect(panel, (90, 95, 110), panel.get_rect(), 2, border_radius=12)
-    surf.blit(panel, (0, surf.get_height() - panel_h))
-
-    f = pygame.font.SysFont("arial", 24)
-    name = battle_enemy.name if battle_enemy else "???"
-    hp = f"HP: {battle_enemy.hp}/{battle_enemy.max_hp}" if battle_enemy else "HP: ?"
-
-    surf.blit(f.render("BATTLE MODE", True, (230, 230, 230)), (20, surf.get_height() - panel_h + 16))
-    surf.blit(f.render(f"Противник: {name}", True, (230, 230, 230)), (20, surf.get_height() - panel_h + 52))
-    surf.blit(f.render(hp, True, (230, 230, 230)), (20, surf.get_height() - panel_h + 88))
-
-
-def ensure_hero():
-    global hero
-    if hero is None:
-        hero = Hero(level=1)
-
-
-def start_battle(battle_node):
-    """
-    battle_node — это САМ узел из scene_nodes[current_line], где type == "battle"
-    """
-    ensure_hero()
-    global mode, battle_enemy, battle_log
-    batlle_btns = []
-    global battle_btns
-    btn_font = pygame.font.SysFont("arial", 22)
-    btn_w, btn_h = 160, 48
-    # позиция: на нижней панели боя, см. draw_batlle (панель высотой 180)
-    x = 20
-    y = screen.get_height() - 180 + 16 + 36 * 3  # чуть над нижним краем панели
-
-    def on_attack():
-        player_attack()
-
-    battle_btns = [
-        Button(x, y, btn_w, btn_h, "Атака", btn_font, on_attack),
-        Button(x + 500, y, btn_w, btn_h, "Защита", btn_font, None)
-    ]
-    battle_enemy = make_enemy_from_json_node(battle_node)
-    battle_log = [f"Бой начался! Противник: {battle_enemy.name} (Lv.{battle_enemy.level})"]
-    mode = mode_battle
-
-
-def enemy_attack():
-    global hero_guard_active, battle_log, mode
-    if not (hero and battle_enemy):
-        return
-
-    # временно добавим бонус к защите, если стойка активна
-    added = 0
-    if hero_guard_active:
-        added = HERO_GUARD_BONUS
-        hero.defense += added
-
-    dmg = battle_enemy.deal_damage_to(hero)
-
-    # откатываем бонус
-    if added:
-        hero.defense -= added
-        hero_guard_active = False  # стойка сработала и погасла
-
-    battle_log.append(f"{battle_enemy.name} атакует на {dmg}.")
-
-    if not hero.is_alive():
-        battle_log.append("Поражение…")
-        mode = mode_dialogue
-        skip_battle_and_go_next()
-
-
-def player_attack():
-    global hero_guard_active, battle_log, mode
-    if not (hero and battle_enemy):
-        return
-    added = 0
-    dmg = hero.deal_damage_to(battle_enemy)
-    battle_log.append(f"{hero.name} бьёт на {dmg}.")
-    if not battle_enemy.is_alive():
-        battle_log.append("Победа!")
-        mode = mode_dialogue
-        skip_battle_and_go_next()
-
-
-def player_defense():
-    global hero_guard_active, mode
-    if not (hero and battle_enemy):
-        return
-    hero_guard_active = True
-    battle_log.append(f"{hero.name} встал в защитную стойку (+{HERO_GUARD_BONUS} к защите до следующего удара).")
-
-
-def switch_scene(next_id):
-    """
-       Переходим в другую сцену:
-         - перечитываем JSON
-         - обновляем фон/музыку
-         - сбрасываем индекс реплики
-         - запускаем первую реплику новой сцены
-       """
-    global current_scene_id, scene_meta, scene_lines, current_line
-    current_scene_id = next_id
-    scene_meta, scene_lines = load_scene_from_json("scenes.json", current_scene_id)
-    apply_scene_meta(scene_meta)
-    current_line = 0
-    if scene_lines:
-        box.set_text(scene_lines[current_line][0], scene_lines[current_line][1])
-
-
-def skip_battle_and_go_next():
-    # после боя просто «нажмём» следующий шаг сцены
-    global current_line
-    current_line += 1
-    if current_line < len(scene_lines):
-        node = scene_mode[current_line]
-        if isinstance(node, dict) and node.get("type") == "battle":
-            # если подряд два боя (редко, но вдруг) — запустим следующий
-            start_battle(node)
-        else:
-            text, speaker = scene_lines[current_line]
-            box.set_text(text, speaker)
-    else:
-        next_id = scene_meta.get("next")
-        if next_id:
-            switch_scene(next_id)
-        else:
-            current_line = len(scene_lines) - 1
-
-
-pygame.init()
-pygame.mixer.init()
-pygame.font.init()
-screen = pygame.display.set_mode((1200, 800))
-mode_dialogue = "dialogue"
-mode_battle = "battle"
-mode = mode_dialogue
-hero = None
-battle_enemy = None
-battle_enemy_id = None
-battle_log = []
-hero_guard_active = False  # включена ли стойка
-HERO_GUARD_BONUS = 3
-# Вся информация о сцене теперь в JSON:
-current_scene_id = "The_awaking"
-scene_meta, scene_lines = load_scene_from_json("scenes.json", current_scene_id)
-apply_scene_meta(scene_meta)
-current_line = 0
-box = boxText(100, 600, 1000, 150)
-box.set_text(scene_lines[current_line][0], scene_lines[current_line][1])
-pygame.display.set_caption("live off lying")
-clock = pygame.time.Clock()  # как я понял эта функция фпс
-bg_path = scene_meta.get("background")
-if bg_path:
-    background = pygame.image.load(bg_path).convert()
-else:
-    background = pygame.Surface((1200, 800))  # запасной фон, если файла нет
-    background.fill((10, 12, 18))
-
-# масштаб под заданный размер (или под текущее окно)
-scale_to = scene_meta.get("scale_to", [1200, 800])
-if isinstance(scale_to, list) and len(scale_to) == 2:
-    background = pygame.transform.scale(background, (scale_to[0], scale_to[1]))
-
-# музыка: как я понял, нужно проигрывать в фоне и задать громкость
-music_path = scene_meta.get("music")
-if music_path:
-    try:
-        pygame.mixer.music.load(music_path)
-        pygame.mixer.music.play(-1)  # -1 — зациклить, если надо один раз —  0)
-        pygame.mixer.music.set_volume(float(scene_meta.get("music_volume", 0.1)))
-    except Exception as e:
-        print("Не удалось загрузить музыку:", e)
-text, speaker = scene_lines[current_line]
-box.set_text(text, speaker)
-while True:
-    dt = clock.tick(144) / 1000.0
-    for event in pygame.event.get():
-        if mode == mode_battle:
-            # клики по кнопкам боя
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                # сначала пытаемся обработать клик кнопками
-                handled = False
-                for b in battle_btns:
-                    if b.handle_event(event):
-                        handled = True
-                        break
-                if handled:
-                    continue  # не проваливаемся дальше в обработку
-
-            # (опционально) выход из боя по SPACE — можешь временно отключить
-            if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
-                mode = mode_dialogue
-                skip_battle_and_go_next()
+    def wrap_text(self, text, max_width):
+        # поддержим ручные переносы \n
+        words = text.replace("\n", " \n ").split(" ")
+        lines, current = [], ""
+        for w in words:
+            if w == "\n":  # принудительный перевод строки
+                lines.append(current)
+                current = ""
                 continue
-        if event.type == pygame.QUIT:
-            pygame.quit()
-            sys.exit()
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_SPACE:
+            test = (current + " " + w).strip() if current else w
+            if self.font.size(test)[0] <= max_width:
+                current = test
+            else:
+                if current:
+                    lines.append(current)
+                # если слово само длиннее строки — режем по символам
+                if self.font.size(w)[0] > max_width:
+                    parts, cur = [], ""
+                    for ch in w:
+                        t = cur + ch
+                        if self.font.size(t)[0] <= max_width:
+                            cur = t
+                        else:
+                            parts.append(cur)
+                            cur = ch
+                    if cur:
+                        parts.append(cur)
+                    lines.extend(parts[:-1])
+                    current = parts[-1] if parts else ""
+                else:
+                    current = w
+        if current:
+            lines.append(current)
+        return lines
+
+    def set_text(self, text, speaker=""):
+        self.text = text
+        self.display_text = ""
+        self.index = 0
+        self.time_accum = 0.0
+        self.flag_finished = False
+        self.speaker = speaker
+
+    def update(self, dt):
+        if not self.flag_finished:
+            self.time_accum += dt
+            chars_to_add = int(self.time_accum * self.cps)  # сколько букв можно написать за время
+            if chars_to_add > 0:
+                self.time_accum -= chars_to_add / self.cps
+                self.index = min(len(self.text), self.index + chars_to_add)
+                self.display_text = self.text[:self.index]
+                if self.index >= len(self.text):
+                    self.flag_finished = True
+        if self.flag_finished:
+            self.dot_time += dt  # время кадра
+            if self.dot_time >= self.dot_interval:  # достаточно ли времени прошло для смены точек
+                self.dot_time -= self.dot_interval  # чтобы после смены одной точки было две
+                self.dot_count = (self.dot_count + 1) % 4  # 0->1->2->3->0
+        else:
+            self.dot_time = 0
+            self.dot_count = 0
+
+    def draw(self, surf):
+        # временная поверхность размера прямоугольника
+        temp = pygame.Surface((self.rect.width, self.rect.height), pygame.SRCALPHA)
+        # RGBA: последний параметр — альфа (0 = прозрачный, 255 = непрозрачный)
+        pygame.draw.rect(temp, (20, 22, 30, 160), temp.get_rect(), border_radius=10)
+        # рамка
+        pygame.draw.rect(temp, (90, 95, 110, 255), temp.get_rect(), 2, border_radius=10)
+        surf.blit(temp, self.rect.topleft)
+
+        # имя говорящего (над рамкой)
+        if self.speaker:
+            name_surface = self.name_font.render(self.speaker, True, (255, 255, 200))
+            surf.blit(name_surface, (self.rect.x + self.padding, self.rect.y - name_surface.get_height() - 4))
+
+        # текст + точки ожидания
+        text_to_draw = self.display_text
+        if self.flag_finished and self.dot_count:
+            text_to_draw += " " + "." * self.dot_count
+
+        max_width = self.rect.width - 2 * self.padding
+        lines = self.wrap_text(text_to_draw, max_width)
+        x = self.rect.x + self.padding
+        y = self.rect.y + self.padding
+        for line in lines:
+            surface = self.font.render(line, True, (230, 230, 230))
+            surf.blit(surface, (x, y))
+            y += surface.get_height() + self.line_spacing
+
+    def skip_to_end(self):
+        self.display_text = self.text
+        self.index = len(self.text)
+        self.flag_finished = True
+
+# ===== БОЕВАЯ МОДЕЛЬ =====
+enemy_register = {}  # сюда регаем классы врагов по строковому id из JSON
+
+def register_enemy(enemy_id):
+    # декоратор: регистрирует класс врага
+    def deco(cls):
+        enemy_register[enemy_id] = cls
+        return cls
+    return deco
+
+class Creature:
+    def __init__(self, name, hp, atk, defense, sprite_path=None, level=1):
+        self.name = name
+        self.max_hp = hp
+        self.hp = hp
+        self.atk = atk
+        self.defense = defense
+        self.level = level
+        self.sprite = None
+        if sprite_path:
+            try:
+                self.sprite = pygame.image.load(sprite_path).convert_alpha()
+            except Exception:
+                self.sprite = None
+
+    def is_alive(self):
+        return self.hp > 0
+
+    # простая формула урона (потом можно усложнить)
+    def deal_damage_to(self, other):
+        raw = (self.atk + max(0, self.level - 1)) - other.defense
+        dmg = max(1, raw)
+        other.hp = max(0, other.hp - dmg)
+        return dmg
+#персонажи
+class Hero(Creature):
+    def __init__(self, level=1, sprite_path=None, **overrides):
+        base = dict(name="Главный герой", hp=25, atk=10, defense=2)
+        base.update(overrides)
+        super().__init__(level=level, sprite_path=sprite_path, **base)
+
+@register_enemy("sensei")
+class SenseiEnemy(Creature):
+    def __init__(self, level=1, sprite_path=None, **overrides):
+        base = dict(name="Сенсей", hp=30, atk=5, defense=2)
+        base.update(overrides)
+        super().__init__(level=level, sprite_path=sprite_path, **base)
+
+    # пример «фичи» класса: скейлимся от уровня
+    def start_of_battle(self):
+        bonus_hp = max(0, (self.level - 1) + 1)
+        self.max_hp += bonus_hp
+        self.hp += bonus_hp
+        self.atk += max(0, self.level - 1)
+
+# ===== SceneManager: JSON → сцена/фон/музыка/линии =====
+class SceneManager:
+    def __init__(self, json_path, start_scene_id, screen, fallback_size=(1200, 800)):
+        self.json_path = json_path
+        self.screen = screen
+        self.fallback_size = fallback_size
+        self.current_scene_id = start_scene_id
+        self.meta = {}
+        self.nodes = []   # сырые узлы из JSON (и реплики, и battle)
+        self.lines = []   # [(text, speaker), …] — для бокса
+        self.line_idx = 0
+        self.background = None
+
+    def load_scene(self, scene_id):
+        with open(self.json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        self.current_scene_id = scene_id
+        scene_obj = data.get("scenes", {}).get(scene_id, {})
+        self.meta = scene_obj.get("meta", {})
+        items = scene_obj.get("lines", [])
+        self.nodes = items[:]
+        lines = []
+        for it in items:
+            if isinstance(it, dict) and it.get("type") == "battle":
+                lines.append(("", ""))  # плейсхолдер, чтобы индексы совпадали
+            else:
+                text = it.get("text", "")
+                speaker = it.get("speaker", "")
+                lines.append((text, speaker))
+        self.lines = lines
+        self.line_idx = 0
+
+    def apply_meta(self):
+        bg_path = self.meta.get("background")
+        if bg_path:
+            try:
+                self.background = pygame.image.load(bg_path).convert()
+            except Exception:
+                self.background = pygame.Surface(self.fallback_size)
+                self.background.fill((10, 12, 18))
+        else:
+            self.background = pygame.Surface(self.fallback_size)
+            self.background.fill((10, 12, 18))
+        if "scale_to" in self.meta:
+            w, h = self.meta["scale_to"]
+            self.background = pygame.transform.scale(self.background, (w, h))
+        bg_path = self.meta.get("background")
+        if bg_path:
+            self.background = pygame.image.load(bg_path).convert()
+        else:
+            self.background = pygame.Surface(self.fallback_size)
+            self.background.fill((10, 12, 18))
+
+        # ⚠️ растягиваем под текущее окно:
+        sw, sh = self.screen.get_size()
+        self.background = pygame.transform.smoothscale(self.background, (sw, sh))
+        music_path = self.meta.get("music")
+        if music_path:
+            try:
+                pygame.mixer.music.load(music_path)
+                pygame.mixer.music.play(-1)
+                if music_path == "music/wake_up.mp3":
+                    pygame.mixer.music.load(music_path)
+                    pygame.mixer.music.play()
+                pygame.mixer.music.set_volume(float(self.meta.get("music_volume", 0.1)))
+            except Exception as e:
+                print("не удалось загрузить музыку:", e)
+
+    def set_first_line_to_box(self, box):
+        if self.lines:
+            text, speaker = self.lines[self.line_idx]
+            box.set_text(text, speaker)
+
+    def get_current_node(self):
+        if 0 <= self.line_idx < len(self.nodes):
+            return self.nodes[self.line_idx]
+        return None
+
+    def advance_or_switch(self, box):
+        self.line_idx += 1
+        if self.line_idx < len(self.lines):
+            node = self.get_current_node()
+            if isinstance(node, dict) and node.get("type") == "battle":
+                return "battle"
+            text, speaker = self.lines[self.line_idx]
+            box.set_text(text, speaker)
+            return "line"
+        else:
+            next_id = self.meta.get("next")
+            if next_id:
+                self.load_scene(next_id)
+                self.apply_meta()
+                self.set_first_line_to_box(box)
+                return "switched"
+            else:
+                self.line_idx = max(0, len(self.lines) - 1)
+                return "end"
+
+# ===== BattleSystem: логика боя, кнопки и отрисовка =====
+class BattleSystem:
+    GUARD_BONUS = 3
+
+    def __init__(self, screen, scene_mgr: SceneManager, hero: Creature, box: boxText):
+        self.screen = screen
+        self.scene_mgr = scene_mgr
+        self.hero = hero
+        self.box = box
+        self.active = False
+        self.enemy = None
+        self.log = []
+        self.guard_active = False
+        self.buttons = []
+        self.panel_h = 200
+        self.font = pygame.font.SysFont("fonts/arialmt.ttf", 32)
+
+    def _make_enemy_from_node(self, node):
+        enemy_id = node.get("enemy", "unknown")
+        level = int(node.get("level", 1))
+        sprite = node.get("sprite")
+        overrides = node.get("override", {})
+        EnemyCls = enemy_register.get(enemy_id)
+        if not EnemyCls:
+            return Creature(name=enemy_id, hp=10, atk=3, defense=1, sprite_path=sprite, level=level)
+        enemy = EnemyCls(level=level, sprite_path=sprite, **overrides)
+        if hasattr(enemy, "start_of_battle"):
+            enemy.start_of_battle()
+        return enemy
+
+    def start(self, battle_node):
+        self.enemy = self._make_enemy_from_node(battle_node)
+        self.log = [f"Бой начался! Противник: {self.enemy.name} (Lv.{self.enemy.level})"]
+        self.guard_active = False
+        self.active = True
+        self._build_buttons()
+
+    def _build_buttons(self):
+        self.buttons = []
+        btn_font = pygame.font.SysFont("fonts/arialmt.ttf", 32)
+        btn_w, btn_h = 160, 48
+        base_y = self.screen.get_height() - self.panel_h + 16
+        x = 20
+        y = base_y + 108 + 8
+        def on_attack():
+            self.player_attack()
+        def on_defense():
+            self.player_defense()
+        self.buttons.append(Button(x,           y, btn_w, btn_h, "Атака",   btn_font, on_attack))
+        self.buttons.append(Button(x + 180,     y, btn_w, btn_h, "Защита",  btn_font, on_defense))
+
+    def player_attack(self):
+        if not (self.hero and self.enemy): return
+        dmg = self.hero.deal_damage_to(self.enemy)
+        self.log.append(f"{self.hero.name} бьёт на {dmg}.")
+        if not self.enemy.is_alive():
+            self.log.append("Победа!")
+            self._finish_and_go_next()
+            return
+        self.enemy_attack()
+
+    def player_defense(self):
+        if not (self.hero and self.enemy): return
+        self.guard_active = True
+        self.log.append(f"{self.hero.name} встал в защитную стойку (+{self.GUARD_BONUS} к защите до следующего удара).")
+        self.enemy_attack()
+
+    def enemy_attack(self):
+        if not (self.hero and self.enemy): return
+        added = 0
+        if self.guard_active:
+            added = self.GUARD_BONUS
+            self.hero.defense += added
+        dmg = self.enemy.deal_damage_to(self.hero)
+        if added:
+            self.hero.defense -= added
+            self.guard_active = False
+        self.log.append(f"{self.enemy.name} атакует на {dmg}.")
+        if not self.hero.is_alive():
+            self.log.append("Поражение…")
+            self._finish_and_go_next()
+
+    def _finish_and_go_next(self):
+        self.active = False
+        self.scene_mgr.advance_or_switch(self.box)
+
+    def handle_event(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            for b in self.buttons:
+                if b.handle_event(event):
+                    return True
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
+            self.active = False
+            self.scene_mgr.advance_or_switch(self.box)
+            return True
+        return False
+
+    def draw(self):
+        # фон сцены
+        self.screen.blit(self.scene_mgr.background, (0, 0))
+
+        # === НОВОЕ: спрайты и HP над ними ===
+        # позиции под твой 1200x800: герой слева, враг справа
+        self._draw_creature_slot(self.screen, self.hero, 320, 420, name_align="left")
+        self._draw_creature_slot(self.screen, self.enemy, 880, 320, name_align="center")
+
+        # панель внизу (как было)
+        panel = pygame.Surface((self.screen.get_width(), self.panel_h), pygame.SRCALPHA)
+        pygame.draw.rect(panel, (20, 22, 30, 220), panel.get_rect(), border_radius=12)
+        pygame.draw.rect(panel, (90, 95, 110), panel.get_rect(), 2, border_radius=12)
+        self.screen.blit(panel, (0, self.screen.get_height() - self.panel_h))
+
+        base_y = self.screen.get_height() - self.panel_h + 16
+        self.screen.blit(self.font.render("BATTLE MODE", True, (230, 230, 230)), (20, base_y))
+        self.screen.blit(self.font.render("Клик по кнопке: Атака/Защита", True, (200, 200, 200)), (20, base_y + 36))
+
+        # кнопки боя
+        for b in self.buttons:
+            b.draw(self.screen)
+
+    def _draw_hp_bar(self, surf, x, y, w, h, cur, mx):
+        # фон полоски
+        pygame.draw.rect(surf, (60, 65, 80), (x, y, w, h), border_radius=6)
+        # заполнение
+        ratio = 0 if mx <= 0 else max(0.0, min(1.0, cur / mx))
+        fill_w = int(w * ratio)
+        pygame.draw.rect(surf, (100, 220, 120), (x, y, fill_w, h), border_radius=6)
+        # рамка
+        pygame.draw.rect(surf, (20, 22, 30), (x, y, w, h), 2, border_radius=6)
+
+    def _draw_creature_slot(self, surf, creature, cx, cy, name_align="center"):
+        """
+        Рисует спрайт по центру (cx,cy) и HP+имя над ним.
+        Если спрайта нет — рисует заглушку.
+        """
+        name_font = self.font
+        hp_font = self.font
+
+        # 1) имя и HP сверху
+        name_text = creature.name if creature else "???"
+        hp_text = f"{creature.hp}/{creature.max_hp}" if creature else "?"
+        name_surf = name_font.render(name_text, True, (230, 230, 230))
+        hp_surf = hp_font.render(hp_text, True, (200, 200, 200))
+
+        # выравнивание имени
+        name_x = cx - name_surf.get_width() // 2
+        if name_align == "left":
+            name_x = cx - 120
+        elif name_align == "right":
+            name_x = cx - 40  # можно подвинуть, если нужно
+
+        name_y = cy - 160
+        surf.blit(name_surf, (name_x, name_y))
+        surf.blit(hp_surf, (name_x, name_y + 28))
+
+        # 2) полоска HP под цифрами
+        bar_x, bar_y, bar_w, bar_h = name_x, name_y + 60, 220, 14
+        if creature:
+            self._draw_hp_bar(surf, bar_x, bar_y, bar_w, bar_h, creature.hp, creature.max_hp)
+        else:
+            self._draw_hp_bar(surf, bar_x, bar_y, bar_w, bar_h, 0, 1)
+
+        # 3) спрайт (или заглушка)
+        if creature and creature.sprite:
+            img = creature.sprite
+            # лёгкое безопасное масштабирование (если спрайт огромный)
+            max_w, max_h = 320, 320
+            iw, ih = img.get_width(), img.get_height()
+            scale = min(1.0, max_w / max(1, iw), max_h / max(1, ih))
+            if scale < 1.0:
+                img = pygame.transform.smoothscale(img, (int(iw * scale), int(ih * scale)))
+            rect = img.get_rect(center=(cx, cy))
+            surf.blit(img, rect)
+        else:
+            # заглушка — «силуэт»
+            placeholder = pygame.Surface((220, 220), pygame.SRCALPHA)
+            pygame.draw.ellipse(placeholder, (80, 85, 110, 200), placeholder.get_rect())
+            pygame.draw.ellipse(placeholder, (20, 22, 30), placeholder.get_rect(), 3)
+            rect = placeholder.get_rect(center=(cx, cy))
+            surf.blit(placeholder, rect)
+
+def main():
+    pygame.init()
+    pygame.mixer.init()
+    pygame.font.init()
+    screen = pygame.display.set_mode((1200, 800))
+    pygame.display.set_caption("live off lying")
+    clock = pygame.time.Clock()
+    box = boxText(100, 600, 1000, 150)
+    start_scene_id = "The_awaking"
+    scene = SceneManager("scenes.json", start_scene_id=start_scene_id, screen=screen)
+    scene.load_scene(scene.current_scene_id)
+    scene.apply_meta()
+    scene.set_first_line_to_box(box)
+    hero = Hero(level=1,sprite_path="sprites/hero.png")
+    battle = BattleSystem(screen=screen, scene_mgr=scene, hero=hero, box=box)
+    while True:
+        dt = clock.tick(144) / 1000.0
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if battle.active:
+                if battle.handle_event(event):
+                    continue
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
                 if not box.flag_finished:
                     box.skip_to_end()
                 else:
-                    current_line += 1
-                    if current_line < len(scene_lines):
-                        node = scene_mode[current_line]  # сырой узел из JSON
-                        if isinstance(node, dict) and node.get("type") == "battle":
-                            # запускаем бой из JSON: enemy id лежит в node["enemy"]
-                            start_battle(node)
-                            # ничего не сетим в box — мы в режиме боя
-                        else:
-                            text, speaker = scene_lines[current_line]
-                            box.set_text(text, speaker)
-                    else:
-                        next_id = scene_meta.get("next")
-                        if next_id:
-                            switch_scene(next_id)
-                        else:
-                            # если next нет — остаёмся на последней (как сейчас)
-                            current_line = len(scene_lines) - 1
-
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if not box.flag_finished:
-                box.skip_to_end()
-            else:
-                current_line += 1
-                if current_line < len(scene_lines):
-                    node = scene_mode[current_line]  # сырой узел из JSON
-                    if isinstance(node, dict) and node.get("type") == "battle":
-                        # запускаем бой из JSON: enemy id лежит в node["enemy"]
-                        start_battle(node)
-                        # ничего не сетим в box — мы в режиме боя
-                    else:
-                        text, speaker = scene_lines[current_line]
-                        box.set_text(text, speaker)
+                    result = scene.advance_or_switch(box)
+                    if result == "battle":
+                        node = scene.get_current_node()
+                        battle.start(node)
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if not box.flag_finished:
+                    box.skip_to_end()
                 else:
-                    next_id = scene_meta.get("next")
-                    if next_id:
-                        switch_scene(next_id)
-                    else:
-                        # если next нет — остаёмся на последней (как сейчас)
-                        current_line = len(scene_lines) - 1
+                    result = scene.advance_or_switch(box)
+                    if result == "battle":
+                        node = scene.get_current_node()
+                        battle.start(node)
+        if battle.active:
+            battle.draw()
+        else:
+            box.update(dt)
+            screen.blit(scene.background, (0, 0))
+            box.draw(screen)
+        pygame.display.flip()
 
-    if mode == mode_dialogue:
-        box.update(dt)
-        screen.blit(background, (0, 0))
-        box.draw(screen)
-    else:
-        draw_batlle(screen)
-        for b in battle_btns:
-            b.draw(screen)
-
-    pygame.display.flip()
+if __name__ == "__main__":
+    main()
