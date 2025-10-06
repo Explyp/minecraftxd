@@ -4,9 +4,6 @@ import pygame
 import random
 import math
 
-# ===== РЕЖИМЫ И СОСТОЯНИЯ =====
-MODE_DIALOGUE = "dialogue"
-MODE_BATTLE = "battle"
 
 
 # ===== ВСПОМОГАТЕЛЬНЫЕ UI-КОМПОНЕНТЫ =====
@@ -122,6 +119,7 @@ class boxText:
         else:
             self.dot_time = 0
             self.dot_count = 0
+
 
     def draw(self, surf):
         # временная поверхность размера прямоугольника
@@ -242,7 +240,7 @@ class Arena:
         self.enemy = enemy
         self.active = False
         self.turn = 1
-        self.log: list[str] = []
+        self.log = []
 
     def start(self):
         self.active = True
@@ -404,7 +402,12 @@ class BattleSystem:
         self.buttons = []
         self.panel_h = 200
         self.font = pygame.font.SysFont("fonts/arialmt.ttf", 32)
-
+        self.result_pending = False
+        self.result_due_ms = 0
+        self.result_delay_ms = 800
+        self.enemy_pending = False  # ждём авто-ход врага?
+        self.enemy_due_ms = 0  # когда враг должен сходить
+        self.enemy_delay_ms = 600
     def _make_enemy_from_node(self, node):
         enemy_id = node.get("enemy", "unknown")
         level = int(node.get("level", 1))
@@ -419,9 +422,12 @@ class BattleSystem:
         return enemy
 
     def start(self, battle_node):
-        import random
+        self.result_pending = False
+        self.result_due_ms = 0
+        self.enemy_pending = False
+        self.enemy_due_ms = 0
         self.enemy = self._make_enemy_from_node(battle_node)
-        rng = random.Random()  # хочешь сид — передай сюда число
+        rng = random.Random()
         self.hero.rng = rng
         self.enemy.rng = rng
 
@@ -454,24 +460,25 @@ class BattleSystem:
         self.log.append(f"{self.hero.name} бьёт на {before - self.enemy.hp}.")
         if self.check_end():
             return
-        self.enemy_attack()
+        self.enemy_pending = True
+        self.enemy_due_ms = pygame.time.get_ticks() + self.enemy_delay_ms
 
-    def check_end(self) -> bool:
-        # победа
+    def check_end(self):
+        now = pygame.time.get_ticks()
+        # враг пал
         if self.enemy and not self.enemy.is_alive():
             self.log.append("Победа.")
-            if hasattr(self, "_finish_and_go_next"):
-                self._finish_and_go_next()
-            else:
-                self.active = False
+            self.enemy_pending = False  # на всякий
+            # не выключаем active: пусть экран боя останется на паузе результата
+            self.result_pending = True
+            self.result_due_ms = now + self.result_delay_ms
             return True
-        # поражение
+        # герой пал
         if self.hero and not self.hero.is_alive():
             self.log.append("Поражение.")
-            if hasattr(self, "_finish_and_go_next"):
-                self._finish_and_go_next()
-            else:
-                self.active = False
+            self.enemy_pending = False
+            self.result_pending = True
+            self.result_due_ms = now + self.result_delay_ms
             return True
         return False
 
@@ -480,7 +487,8 @@ class BattleSystem:
             return
         self.hero.defend()  # никаких флагов в системе боя
         self.log.append(f"{self.hero.name} встал в блок.")
-        self.enemy_attack()
+        self.enemy_pending = True
+        self.enemy_due_ms = pygame.time.get_ticks() + self.enemy_delay_ms
 
     def enemy_attack(self):
         if not (self.hero and self.enemy) or not self.active:
@@ -510,6 +518,8 @@ class BattleSystem:
         self.scene_mgr.advance_or_switch(self.box)
 
     def handle_event(self, event):
+        if self.enemy_pending or self.result_pending:
+            return True
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             for b in self.buttons:
                 if b.handle_event(event):
@@ -521,7 +531,6 @@ class BattleSystem:
     def draw(self):
         # фон сцены
         self.screen.blit(self.scene_mgr.background, (0, 0))
-
         # === НОВОЕ: спрайты и HP над ними ===
         # позиции под твой 1200x800: герой слева, враг справа
         self._draw_creature_slot(self.screen, self.hero, 320, 420, name_align="left")
@@ -534,12 +543,31 @@ class BattleSystem:
         self.screen.blit(panel, (0, self.screen.get_height() - self.panel_h))
 
         base_y = self.screen.get_height() - self.panel_h + 16
-        self.screen.blit(self.font.render("BATTLE MODE", True, (230, 230, 230)), (20, base_y))
-        self.screen.blit(self.font.render("Клик по кнопке: Атака/Защита", True, (200, 200, 200)), (20, base_y + 36))
+        if self.enemy_pending:
+            note = self.font.render("Ход противника...", True, (200, 200, 220))
+            self.screen.blit(note, (20, base_y + 12))  # подвинь как удобнее
+        for i in range(len(self.log)):
+            self.screen.blit(self.font.render(f"{self.log[-1]}", True, (200, 200, 200)), (20, base_y + 36))
 
         # кнопки боя
         for b in self.buttons:
             b.draw(self.screen)
+
+    def update(self):
+        if self.enemy_pending and pygame.time.get_ticks() >= self.enemy_due_ms:
+            self.enemy_pending = False
+            # если за задержку бой не закончился — ходит враг
+            if self.active:
+                self.enemy_attack()
+        if self.enemy_pending and pygame.time.get_ticks() >= self.enemy_due_ms:
+            self.enemy_pending = False
+            if self.active and not self.result_pending:
+                self.enemy_attack()
+
+            # авто-переход после показа результата
+        if self.result_pending and pygame.time.get_ticks() >= self.result_due_ms:
+            self.result_pending = False
+            self._finish_and_go_next()  # тут и только тут уходим дальше
 
     def _draw_hp_bar(self, surf, x, y, w, h, cur, mx):
         # фон полоски
@@ -616,6 +644,7 @@ def main():
     hero = Hero(level=1, sprite_path="sprites/hero.png")
     battle = BattleSystem(screen=screen, scene_mgr=scene, hero=hero, box=box)
     while True:
+        battle.update()
         dt = clock.tick(144) / 1000.0
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
