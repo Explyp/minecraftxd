@@ -1,11 +1,13 @@
-# -*- coding: utf-8 -*-
 import sys
 import json
 import pygame
+import random
+import math
 
 # ===== РЕЖИМЫ И СОСТОЯНИЯ =====
 MODE_DIALOGUE = "dialogue"
-MODE_BATTLE   = "battle"
+MODE_BATTLE = "battle"
+
 
 # ===== ВСПОМОГАТЕЛЬНЫЕ UI-КОМПОНЕНТЫ =====
 class Button:
@@ -38,25 +40,26 @@ class Button:
                 return True
         return False
 
+
 # ===== ДИАЛОГОВЫЙ БОКС =====
 class boxText:
     def __init__(self, x, y, wight, height):
         # как я понял х и у это координаты верхнего левого угла,а дальше размер
         self.rect = pygame.Rect(x, y, wight, height)
-        self.text = ""             # полный текст
-        self.speaker = ""          # имя говорящего
+        self.text = ""  # полный текст
+        self.speaker = ""  # имя говорящего
         self.name_font = pygame.font.SysFont("fonts/arialmt.ttf", 34)
-        self.display_text = ""     # то что уже напечаталось
+        self.display_text = ""  # то что уже напечаталось
         self.font = pygame.font.SysFont("fonts/arialmt.ttf", 38)
         self.flag_finished = False
-        self.index = 0             # чтобы понимать какое кол-во букв выводится
+        self.index = 0  # чтобы понимать какое кол-во букв выводится
         self.time_accum = 0.0
-        self.cps = 12              # cкорость символа как я понял
-        self.dot_time = 0.0        # таймер для точек
-        self.dot_interval = 0.4    # как часто переключаются точки(сек)
-        self.dot_count = 0         # 0..3 (0=нет точек,1="." и т.д)
-        self.padding = 16          # отступы внутри бокса
-        self.line_spacing = 6      # расстояние между строками (пиксели)
+        self.cps = 12  # cкорость символа как я понял
+        self.dot_time = 0.0  # таймер для точек
+        self.dot_interval = 0.4  # как часто переключаются точки(сек)
+        self.dot_count = 0  # 0..3 (0=нет точек,1="." и т.д)
+        self.padding = 16  # отступы внутри бокса
+        self.line_spacing = 6  # расстояние между строками (пиксели)
 
     def wrap_text(self, text, max_width):
         # поддержим ручные переносы \n
@@ -153,25 +156,31 @@ class boxText:
         self.index = len(self.text)
         self.flag_finished = True
 
+
 # ===== БОЕВАЯ МОДЕЛЬ =====
 enemy_register = {}  # сюда регаем классы врагов по строковому id из JSON
+
 
 def register_enemy(enemy_id):
     # декоратор: регистрирует класс врага
     def deco(cls):
         enemy_register[enemy_id] = cls
         return cls
+
     return deco
 
+
 class Creature:
-    def __init__(self, name, hp, atk, defense, sprite_path=None, level=1):
+    def __init__(self, name, hp, atk, defense, sprite_path=None, level=1, rng=None):
         self.name = name
         self.max_hp = hp
         self.hp = hp
         self.atk = atk
         self.defense = defense
         self.level = level
+        self.guard = False
         self.sprite = None
+        self.rng = rng or random.Random()
         if sprite_path:
             try:
                 self.sprite = pygame.image.load(sprite_path).convert_alpha()
@@ -181,32 +190,107 @@ class Creature:
     def is_alive(self):
         return self.hp > 0
 
-    # простая формула урона (потом можно усложнить)
-    def deal_damage_to(self, other):
-        raw = (self.atk + max(0, self.level - 1)) - other.defense
-        dmg = max(1, raw)
-        other.hp = max(0, other.hp - dmg)
-        return dmg
-#персонажи
-class Hero(Creature):
+    def calc_damage(self, target: "Creature"):
+        spread = self.rng.randint(-1, 1)
+        raw = max(1, (self.atk + max(0, self.level - 1)) - target.defense + spread)
+        return raw
+
+    def take_damage(self, amount: int):
+        if self.guard:
+            amount = max(1, amount - self.guard_reduction(amount))
+            self.guard = False
+        self.hp = max(0, self.hp - amount)
+
+    def guard_reduction(self, incoming: int):
+        base = 0.2+0.02*math.sqrt(self.defense)
+        pct = max(0.05,min(0.7,base))
+        return max(1, math.ceil(incoming * pct))
+
+    def attack(self, target: "Creature"):
+        dmg = self.calc_damage(target)
+        target.take_damage(dmg)
+
+    def defend(self):
+        self.guard = True
+
+
+class Player(Creature):
+    pass
+
+class Enemy(Creature):
+    def decide_action(self, target: Creature) -> str:
+        return "defend" if self.rng.random() < 0.5 else "attack"
+
+# персонажи
+class Hero(Player):
     def __init__(self, level=1, sprite_path=None, **overrides):
-        base = dict(name="Главный герой", hp=25, atk=10, defense=2)
+        base = dict(name="Главный герой", hp=50, atk=10, defense=2)
         base.update(overrides)
         super().__init__(level=level, sprite_path=sprite_path, **base)
+
 
 @register_enemy("sensei")
-class SenseiEnemy(Creature):
+class SenseiEnemy(Enemy):
     def __init__(self, level=1, sprite_path=None, **overrides):
-        base = dict(name="Сенсей", hp=30, atk=5, defense=2)
+        base = dict(name="Сенсей", hp=25, atk=13, defense=2)
         base.update(overrides)
         super().__init__(level=level, sprite_path=sprite_path, **base)
 
-    # пример «фичи» класса: скейлимся от уровня
-    def start_of_battle(self):
-        bonus_hp = max(0, (self.level - 1) + 1)
-        self.max_hp += bonus_hp
-        self.hp += bonus_hp
-        self.atk += max(0, self.level - 1)
+class Arena:
+    def __init__(self, hero: Player, enemy: Enemy):
+        self.hero = hero
+        self.enemy = enemy
+        self.active = False
+        self.turn = 1
+        self.log: list[str] = []
+
+    def start(self):
+        self.active = True
+        self.turn = 1
+        self.log.clear()
+        self.log.append(f"Бой: {self.hero.name} vs {self.enemy.name}")
+
+    # фасады под кнопки
+    def player_attack(self):
+        if not self.active: return
+        before = self.enemy.hp
+        self.hero.attack(self.enemy)
+        self.log.append(f"{self.hero.name} бьёт на {before - self.enemy.hp}.")
+        if not self._check_end(): self._enemy_turn()
+
+    def player_defend(self):
+        if not self.active: return
+        self.hero.defend()
+        self.log.append(f"{self.hero.name} встал в блок.")
+        self._enemy_turn()
+
+    # совместимость со старым вызовом
+    def enemy_attack(self):
+        if not self.active: return
+        self._enemy_turn()
+
+    def _enemy_turn(self):
+        act = self.enemy.decide_action(self.hero)
+        if act == "attack":
+            before = self.hero.hp
+            self.enemy.attack(self.hero)
+            self.log.append(f"{self.enemy.name} бьёт на {before - self.hero.hp}.")
+        else:
+            self.enemy.defend()
+            self.log.append(f"{self.enemy.name} встал в блок.")
+        self.turn += 1
+        self._check_end()
+
+    def _check_end(self):
+        if not self.enemy.is_alive():
+            self.log.append("Победа.")
+            self.active = False
+            return True
+        if not self.hero.is_alive():
+            self.log.append("Поражение.")
+            self.active = False
+            return True
+        return False
 
 # ===== SceneManager: JSON → сцена/фон/музыка/линии =====
 class SceneManager:
@@ -216,8 +300,8 @@ class SceneManager:
         self.fallback_size = fallback_size
         self.current_scene_id = start_scene_id
         self.meta = {}
-        self.nodes = []   # сырые узлы из JSON (и реплики, и battle)
-        self.lines = []   # [(text, speaker), …] — для бокса
+        self.nodes = []  # сырые узлы из JSON (и реплики, и battle)
+        self.lines = []  # [(text, speaker), …] — для бокса
         self.line_idx = 0
         self.background = None
 
@@ -306,10 +390,9 @@ class SceneManager:
                 self.line_idx = max(0, len(self.lines) - 1)
                 return "end"
 
+
 # ===== BattleSystem: логика боя, кнопки и отрисовка =====
 class BattleSystem:
-    GUARD_BONUS = 3
-
     def __init__(self, screen, scene_mgr: SceneManager, hero: Creature, box: boxText):
         self.screen = screen
         self.scene_mgr = scene_mgr
@@ -318,7 +401,6 @@ class BattleSystem:
         self.active = False
         self.enemy = None
         self.log = []
-        self.guard_active = False
         self.buttons = []
         self.panel_h = 200
         self.font = pygame.font.SysFont("fonts/arialmt.ttf", 32)
@@ -337,9 +419,13 @@ class BattleSystem:
         return enemy
 
     def start(self, battle_node):
+        import random
         self.enemy = self._make_enemy_from_node(battle_node)
+        rng = random.Random()  # хочешь сид — передай сюда число
+        self.hero.rng = rng
+        self.enemy.rng = rng
+
         self.log = [f"Бой начался! Противник: {self.enemy.name} (Lv.{self.enemy.level})"]
-        self.guard_active = False
         self.active = True
         self._build_buttons()
 
@@ -350,43 +436,74 @@ class BattleSystem:
         base_y = self.screen.get_height() - self.panel_h + 16
         x = 20
         y = base_y + 108 + 8
+
         def on_attack():
             self.player_attack()
+
         def on_defense():
             self.player_defense()
-        self.buttons.append(Button(x,           y, btn_w, btn_h, "Атака",   btn_font, on_attack))
-        self.buttons.append(Button(x + 180,     y, btn_w, btn_h, "Защита",  btn_font, on_defense))
+
+        self.buttons.append(Button(x, y, btn_w, btn_h, "Атака", btn_font, on_attack))
+        self.buttons.append(Button(x + 180, y, btn_w, btn_h, "Защита", btn_font, on_defense))
 
     def player_attack(self):
-        if not (self.hero and self.enemy): return
-        dmg = self.hero.deal_damage_to(self.enemy)
-        self.log.append(f"{self.hero.name} бьёт на {dmg}.")
-        if not self.enemy.is_alive():
-            self.log.append("Победа!")
-            self._finish_and_go_next()
+        if not (self.hero and self.enemy) or not self.active:
+            return
+        before = self.enemy.hp
+        self.hero.attack(self.enemy)  # было: deal_damage_to
+        self.log.append(f"{self.hero.name} бьёт на {before - self.enemy.hp}.")
+        if self.check_end():
             return
         self.enemy_attack()
 
+    def check_end(self) -> bool:
+        # победа
+        if self.enemy and not self.enemy.is_alive():
+            self.log.append("Победа.")
+            if hasattr(self, "_finish_and_go_next"):
+                self._finish_and_go_next()
+            else:
+                self.active = False
+            return True
+        # поражение
+        if self.hero and not self.hero.is_alive():
+            self.log.append("Поражение.")
+            if hasattr(self, "_finish_and_go_next"):
+                self._finish_and_go_next()
+            else:
+                self.active = False
+            return True
+        return False
+
     def player_defense(self):
-        if not (self.hero and self.enemy): return
-        self.guard_active = True
-        self.log.append(f"{self.hero.name} встал в защитную стойку (+{self.GUARD_BONUS} к защите до следующего удара).")
+        if not (self.hero and self.enemy) or not self.active:
+            return
+        self.hero.defend()  # никаких флагов в системе боя
+        self.log.append(f"{self.hero.name} встал в блок.")
         self.enemy_attack()
 
     def enemy_attack(self):
-        if not (self.hero and self.enemy): return
-        added = 0
-        if self.guard_active:
-            added = self.GUARD_BONUS
-            self.hero.defense += added
-        dmg = self.enemy.deal_damage_to(self.hero)
-        if added:
-            self.hero.defense -= added
-            self.guard_active = False
-        self.log.append(f"{self.enemy.name} атакует на {dmg}.")
-        if not self.hero.is_alive():
-            self.log.append("Поражение…")
-            self._finish_and_go_next()
+        if not (self.hero and self.enemy) or not self.active:
+            return
+        act = getattr(self.enemy, "decide_action", None)
+        action = act(self.hero) if callable(act) else "attack"
+
+        if action == "attack":
+            before = self.hero.hp
+            self.enemy.attack(self.hero)
+            self.log.append(f"{self.enemy.name} бьёт на {before - self.hero.hp}.")
+        elif action == "defend":
+            self.enemy.defend()
+            self.log.append(f"{self.enemy.name} встал в блок.")
+        else:
+            if hasattr(self.enemy, action):
+                getattr(self.enemy, action)(self.hero)
+                self.log.append(f"{self.enemy.name} использует {action}.")
+            else:
+                self.log.append(f"{self.enemy.name} растерялся.")
+        self.check_end()
+
+
 
     def _finish_and_go_next(self):
         self.active = False
@@ -398,8 +515,6 @@ class BattleSystem:
                 if b.handle_event(event):
                     return True
         if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
-            self.active = False
-            self.scene_mgr.advance_or_switch(self.box)
             return True
         return False
 
@@ -437,41 +552,39 @@ class BattleSystem:
         pygame.draw.rect(surf, (20, 22, 30), (x, y, w, h), 2, border_radius=6)
 
     def _draw_creature_slot(self, surf, creature, cx, cy, name_align="center"):
-        """
-        Рисует спрайт по центру (cx,cy) и HP+имя над ним.
-        Если спрайта нет — рисует заглушку.
-        """
         name_font = self.font
         hp_font = self.font
 
-        # 1) имя и HP сверху
+        # 1) Текст: имя и цифры HP (сначала рисуем ИХ)
         name_text = creature.name if creature else "???"
         hp_text = f"{creature.hp}/{creature.max_hp}" if creature else "?"
+
         name_surf = name_font.render(name_text, True, (230, 230, 230))
         hp_surf = hp_font.render(hp_text, True, (200, 200, 200))
 
-        # выравнивание имени
+        # позиционирование (подправь отступ, если нужно)
         name_x = cx - name_surf.get_width() // 2
         if name_align == "left":
             name_x = cx - 120
         elif name_align == "right":
-            name_x = cx - 40  # можно подвинуть, если нужно
+            name_x = cx - 40
 
-        name_y = cy - 160
+        name_y = cy - 220
+
+        # РИСУЕМ имя и цифры HP
         surf.blit(name_surf, (name_x, name_y))
         surf.blit(hp_surf, (name_x, name_y + 28))
 
-        # 2) полоска HP под цифрами
+        # 2) Полоска HP (рисуем ПОСЛЕ текста — значит, будет поверх, если пересекается)
         bar_x, bar_y, bar_w, bar_h = name_x, name_y + 60, 220, 14
         if creature:
             self._draw_hp_bar(surf, bar_x, bar_y, bar_w, bar_h, creature.hp, creature.max_hp)
         else:
             self._draw_hp_bar(surf, bar_x, bar_y, bar_w, bar_h, 0, 1)
 
-        # 3) спрайт (или заглушка)
+        # 3) Спрайт (как и было)
         if creature and creature.sprite:
             img = creature.sprite
-            # лёгкое безопасное масштабирование (если спрайт огромный)
             max_w, max_h = 320, 320
             iw, ih = img.get_width(), img.get_height()
             scale = min(1.0, max_w / max(1, iw), max_h / max(1, ih))
@@ -480,12 +593,12 @@ class BattleSystem:
             rect = img.get_rect(center=(cx, cy))
             surf.blit(img, rect)
         else:
-            # заглушка — «силуэт»
             placeholder = pygame.Surface((220, 220), pygame.SRCALPHA)
             pygame.draw.ellipse(placeholder, (80, 85, 110, 200), placeholder.get_rect())
             pygame.draw.ellipse(placeholder, (20, 22, 30), placeholder.get_rect(), 3)
             rect = placeholder.get_rect(center=(cx, cy))
             surf.blit(placeholder, rect)
+
 
 def main():
     pygame.init()
@@ -500,7 +613,7 @@ def main():
     scene.load_scene(scene.current_scene_id)
     scene.apply_meta()
     scene.set_first_line_to_box(box)
-    hero = Hero(level=1,sprite_path="sprites/hero.png")
+    hero = Hero(level=1, sprite_path="sprites/hero.png")
     battle = BattleSystem(screen=screen, scene_mgr=scene, hero=hero, box=box)
     while True:
         dt = clock.tick(144) / 1000.0
@@ -534,6 +647,7 @@ def main():
             screen.blit(scene.background, (0, 0))
             box.draw(screen)
         pygame.display.flip()
+
 
 if __name__ == "__main__":
     main()
